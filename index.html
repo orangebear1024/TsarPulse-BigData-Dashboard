@@ -1,0 +1,457 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>TSARPULSE • NOC MONITOR</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Inter:wght@300;400;500;600;700&display=swap');
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0D111A;
+    font-family: 'Inter', 'JetBrains Mono', system-ui, sans-serif;
+    color: #E2E8F0;
+    min-height: 100vh;
+    overflow-x: hidden;
+    -webkit-font-smoothing: antialiased;
+  }
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background-image:
+      linear-gradient(rgba(30,41,59,0.15) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(30,41,59,0.15) 1px, transparent 1px);
+    background-size: 60px 60px;
+    pointer-events: none; z-index: 0;
+  }
+  .glass-panel {
+    background: rgba(15,23,42,0.88);
+    border: 1px solid #1E293B;
+    border-radius: 12px;
+    backdrop-filter: blur(20px);
+    -webkit-backdrop-filter: blur(20px);
+    transition: border-color 0.3s ease;
+  }
+  .glass-panel:hover { border-color: rgba(99,102,241,0.4); }
+  .host-square {
+    aspect-ratio: 1; width: 100%;
+    border-radius: 6px; cursor: pointer;
+    display: flex; align-items: center; justify-content: center;
+    font-family: 'JetBrains Mono', monospace;
+    font-size: 11px; font-weight: 600;
+    color: rgba(255,255,255,0.9);
+    border: 1px solid transparent;
+    transition: all 0.25s cubic-bezier(0.4,0,0.2,1);
+  }
+  .host-square:hover {
+    transform: scale(1.08); z-index: 10;
+    box-shadow: 0 0 20px rgba(99,102,241,0.3);
+    border-color: rgba(255,255,255,0.3);
+  }
+  .host-square.active {
+    border-color: #fff !important;
+    box-shadow: 0 0 24px rgba(99,102,241,0.5);
+    transform: scale(1.05); z-index: 5;
+  }
+  .status-healthy { background: linear-gradient(135deg, #059669 0%, #10B981 60%, #34D399 100%); }
+  .status-warning { background: linear-gradient(135deg, #D97706 0%, #F59E0B 60%, #FBBF24 100%); }
+  .status-critical { background: linear-gradient(135deg, #DC2626 0%, #EF4444 60%, #F87171 100%); }
+  @keyframes breathe-green {
+    0%,100% { box-shadow: 0 0 6px rgba(16,185,129,0.2); }
+    50% { box-shadow: 0 0 14px rgba(16,185,129,0.45); }
+  }
+  @keyframes breathe-amber {
+    0%,100% { box-shadow: 0 0 8px rgba(245,158,11,0.25); }
+    50% { box-shadow: 0 0 18px rgba(245,158,11,0.5); }
+  }
+  @keyframes breathe-red {
+    0%,100% { box-shadow: 0 0 8px rgba(239,68,68,0.3); }
+    50% { box-shadow: 0 0 18px rgba(239,68,68,0.55); }
+  }
+  .breathe-green { animation: breathe-green 3s ease-in-out infinite; }
+  .breathe-amber { animation: breathe-amber 2.5s ease-in-out infinite; }
+  .breathe-red   { animation: breathe-red 2s ease-in-out infinite; }
+  @keyframes scroll-up {
+    0% { transform: translateY(0); }
+    100% { transform: translateY(-50%); }
+  }
+  .alert-scroll-container { overflow: hidden; position: relative; height: 300px; }
+  .alert-scroll-inner { animation: scroll-up 40s linear infinite; }
+  .alert-scroll-container:hover .alert-scroll-inner { animation-play-state: paused; }
+  .alert-item:hover { background: rgba(30,41,59,0.5) !important; }
+  .clock-display {
+    font-family: 'JetBrains Mono', monospace;
+    text-shadow: 0 0 20px rgba(99,102,241,0.3);
+    letter-spacing: 0.05em;
+  }
+  .kpi-card { transition: all 0.3s ease; }
+  .kpi-card:hover { transform: translateY(-2px); border-color: rgba(99,102,241,0.4); }
+  .chart-box { width: 100%; height: 300px; position: relative; }
+  ::-webkit-scrollbar { width: 4px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: rgba(148,163,184,0.3); border-radius: 4px; }
+  .status-dot {
+    display: inline-block; width: 6px; height: 6px;
+    border-radius: 50%; margin-right: 6px; flex-shrink: 0;
+  }
+  .loading-indicator {
+    position: absolute; inset: 0;
+    display: flex; align-items: center; justify-content: center;
+    background: rgba(13,17,26,0.7);
+    z-index: 50; border-radius: 12px;
+  }
+  .loading-spinner {
+    width: 32px; height: 32px;
+    border: 3px solid rgba(99,102,241,0.3);
+    border-top-color: #6366F1;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @media (max-width: 768px) {
+    .host-square { font-size: 8px; border-radius: 4px; }
+    .chart-box { height: 240px; }
+    .clock-display { font-size: 1rem !important; }
+    .alert-scroll-container { height: 240px; }
+  }
+</style>
+</head>
+<body class="p-3 md:p-4 lg:p-5 relative z-10">
+
+<header class="glass-panel p-3 md:p-4 mb-3 md:mb-4">
+  <div class="flex flex-col lg:flex-row items-start lg:items-center justify-between gap-3">
+    <div class="flex items-center gap-3 shrink-0">
+      <div class="w-2.5 h-2.5 rounded-full breathe-green" style="background:#10B981"></div>
+      <h1 class="text-base md:text-lg font-semibold tracking-wider" style="color:#E2E8F0">
+        TSARPULSE<span class="ml-1.5" style="color:#6366F1">•</span>
+        <span class="font-normal text-sm md:text-base" style="color:#94A3B8">基础架构运行监控中心</span>
+      </h1>
+    </div>
+    <div class="clock-display text-xl md:text-2xl lg:text-3xl font-medium" style="color:#6366F1" id="live-clock"></div>
+    <div class="flex flex-wrap gap-2 shrink-0">
+      <div class="kpi-card glass-panel px-3 py-1.5 flex items-center gap-2">
+        <span class="text-xs" style="color:#94A3B8">集群</span>
+        <span class="font-semibold text-sm" style="color:#10B981" id="kpi-clusters">--</span>
+      </div>
+      <div class="kpi-card glass-panel px-3 py-1.5 flex items-center gap-2">
+        <span class="status-dot" style="background:#6366F1;box-shadow:0 0 6px #6366F1"></span>
+        <span class="text-xs" style="color:#94A3B8">活跃</span>
+        <span class="font-semibold text-sm" style="color:#E2E8F0" id="kpi-active">--</span>
+      </div>
+      <div class="kpi-card glass-panel px-3 py-1.5 flex items-center gap-2">
+        <span class="text-xs" style="color:#94A3B8">CPU负载</span>
+        <span class="font-semibold text-sm" style="color:#10B981" id="kpi-cpu">--</span>
+      </div>
+      <div class="kpi-card glass-panel px-3 py-1.5 flex items-center gap-2">
+        <span class="text-xs" style="color:#94A3B8">吞吐量</span>
+        <span class="font-semibold text-sm" style="color:#6366F1" id="kpi-net">--</span>
+      </div>
+      <div class="kpi-card glass-panel px-3 py-1.5 flex items-center gap-2">
+        <span class="status-dot" style="background:#F59E0B;box-shadow:0 0 6px #F59E0B"></span>
+        <span class="text-xs" style="color:#94A3B8">告警</span>
+        <span class="font-semibold text-sm" style="color:#F59E0B" id="kpi-alerts">--</span>
+      </div>
+    </div>
+  </div>
+</header>
+
+<div class="grid grid-cols-1 lg:grid-cols-4 gap-3 md:gap-4">
+
+  <section class="glass-panel p-3 md:p-4" style="position:relative">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-xs md:text-sm font-medium tracking-wider uppercase" style="color:#94A3B8">主机集群矩阵</h2>
+      <span class="text-xs" style="color:#64748B" id="selected-host-label">全部主机</span>
+    </div>
+    <div class="grid grid-cols-5 gap-1.5 md:gap-2" id="host-grid"></div>
+    <div class="flex items-center gap-3 mt-3 text-xs" style="color:#64748B">
+      <span><span class="status-dot" style="background:#10B981;box-shadow:0 0 4px #10B981"></span>健康</span>
+      <span><span class="status-dot" style="background:#F59E0B;box-shadow:0 0 4px #F59E0B"></span>警告</span>
+      <span><span class="status-dot" style="background:#EF4444;box-shadow:0 0 4px #EF4444"></span>故障</span>
+    </div>
+  </section>
+
+  <div class="lg:col-span-2 flex flex-col gap-3 md:gap-4">
+    <div class="glass-panel p-3 md:p-4" style="position:relative">
+      <h2 class="text-xs md:text-sm font-medium tracking-wider uppercase mb-2" style="color:#94A3B8">CPU 与 内存 · 历史负载双轴</h2>
+      <div class="chart-box" id="chart-cpu-mem"><div class="loading-indicator"><div class="loading-spinner"></div></div></div>
+    </div>
+    <div class="glass-panel p-3 md:p-4" style="position:relative">
+      <h2 class="text-xs md:text-sm font-medium tracking-wider uppercase mb-2" style="color:#94A3B8">网络吞吐 与 磁盘延迟 · 双轴趋势</h2>
+      <div class="chart-box" id="chart-net-disk"><div class="loading-indicator"><div class="loading-spinner"></div></div></div>
+    </div>
+  </div>
+
+  <div class="flex flex-col gap-3 md:gap-4">
+    <div class="glass-panel p-3 md:p-4" style="position:relative">
+      <h2 class="text-xs md:text-sm font-medium tracking-wider uppercase mb-2" style="color:#94A3B8">指标采集分类占比</h2>
+      <div class="chart-box" id="chart-donut"><div class="loading-indicator"><div class="loading-spinner"></div></div></div>
+    </div>
+    <div class="glass-panel p-3 md:p-4 flex-1 flex flex-col" style="min-height:340px">
+      <h2 class="text-xs md:text-sm font-medium tracking-wider uppercase mb-2" style="color:#94A3B8">实时智能告警流水</h2>
+      <div class="alert-scroll-container flex-1" id="alert-container">
+        <div class="alert-scroll-inner" id="alert-inner" style="display:flex;flex-direction:column;gap:4px">
+          <div style="color:#64748B;font-size:12px;text-align:center;padding:16px">正在加载告警数据...</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+(function() {
+  'use strict';
+  var API_BASE = (window.location.protocol === 'file:') ? 'http://localhost:5000' : '';
+  var selectedHost = null;
+  var currentData = null;
+  var chartCpuMem = null, chartNetDisk = null, chartDonut = null;
+  var chartsReady = false;
+
+  function initCharts() {
+    if (chartsReady) return;
+    ['chart-cpu-mem','chart-net-disk','chart-donut'].forEach(function(id) {
+      var el = document.getElementById(id);
+      if (el) el.style.height = '300px';
+    });
+    chartCpuMem  = echarts.init(document.getElementById('chart-cpu-mem'));
+    chartNetDisk = echarts.init(document.getElementById('chart-net-disk'));
+    chartDonut   = echarts.init(document.getElementById('chart-donut'));
+    chartsReady  = true;
+  }
+
+  function updateClock() {
+    var n = new Date();
+    var p = function(v){ return String(v).padStart(2,'0'); };
+    document.getElementById('live-clock').textContent =
+      n.getFullYear()+'-'+p(n.getMonth()+1)+'-'+p(n.getDate())+' '+p(n.getHours())+':'+p(n.getMinutes())+':'+p(n.getSeconds());
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  function fetchData(hostid, cb) {
+    var url = API_BASE + '/api/metrics';
+    if (hostid) url += '?hostid=' + encodeURIComponent(hostid);
+    fetch(url).then(function(r){ if(!r.ok)throw new Error('HTTP '+r.status); return r.json(); })
+      .then(function(d){ currentData=d; if(cb)cb(null,d); })
+      .catch(function(e){ console.error('API error:',e); if(cb)cb(e); });
+  }
+
+  function getTooltip() {
+    return {
+      backgroundColor:'rgba(15,23,42,0.95)', borderColor:'#1E293B',
+      textStyle:{color:'#E2E8F0',fontSize:12,fontFamily:'JetBrains Mono,monospace'},
+      extraCssText:'border-radius:8px;backdrop-filter:blur(16px);box-shadow:0 8px 32px rgba(0,0,0,0.5);'
+    };
+  }
+
+  function refreshCpuMemChart() {
+    if(!chartsReady||!currentData) return;
+    var ts = currentData.timeSeries;
+    var cpuData = ts.cpu_percent || [];
+    var memData = ts.mem_metric || [];
+    if(cpuData.length===0){chartCpuMem.clear();return;}
+    var memGB = memData.map(function(d){return [d[0],Math.round(d[1]/1024*100)/100];});
+    var interval = Math.max(Math.floor(cpuData.length/14),0)||0;
+    chartCpuMem.setOption({
+      tooltip: Object.assign({trigger:'axis'},getTooltip()),
+      legend:{bottom:0,textStyle:{color:'#94A3B8',fontSize:11},data:['CPU 使用率 (%)','内存用量 (GB)']},
+      grid:{left:'3%',right:'4%',top:12,bottom:32,containLabel:true},
+      xAxis:{type:'category',boundaryGap:false,data:cpuData.map(function(d){return d[0];}),
+        axisLine:{lineStyle:{color:'#1E293B'}},axisTick:{show:false},
+        axisLabel:{color:'#64748B',fontSize:9,fontFamily:'JetBrains Mono,monospace',interval:interval,rotate:30},
+        splitLine:{show:false}},
+      yAxis:[
+        {type:'value',name:'CPU %',min:0,max:100,nameTextStyle:{color:'#64748B',fontSize:10},
+          axisLabel:{color:'#64748B',fontSize:10,formatter:'{value}%'},
+          splitLine:{lineStyle:{color:'rgba(30,41,59,0.4)',type:'dashed'}}},
+        {type:'value',name:'内存 GB',nameTextStyle:{color:'#64748B',fontSize:10},
+          axisLabel:{color:'#64748B',fontSize:10,formatter:'{value} GB'},splitLine:{show:false}}
+      ],
+      series:[
+        {name:'CPU 使用率 (%)',type:'line',data:cpuData.map(function(d){return d[1];}),smooth:true,symbol:'none',
+          lineStyle:{color:'#10B981',width:2},
+          areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[
+            {offset:0,color:'rgba(16,185,129,0.35)'},{offset:1,color:'rgba(16,185,129,0.02)'}])},
+          itemStyle:{color:'#10B981'}},
+        {name:'内存用量 (GB)',type:'line',yAxisIndex:1,data:memGB.map(function(d){return d[1];}),smooth:true,symbol:'none',
+          lineStyle:{color:'#6366F1',width:2},
+          areaStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[
+            {offset:0,color:'rgba(99,102,241,0.35)'},{offset:1,color:'rgba(99,102,241,0.02)'}])},
+          itemStyle:{color:'#6366F1'}}
+      ]
+    },true);
+  }
+
+  function refreshNetDiskChart() {
+    if(!chartsReady||!currentData) return;
+    var ts = currentData.timeSeries;
+    var netData = ts.net_speed_mb || [];
+    var diskData = ts.disk_latency_ms || [];
+    if(netData.length===0){chartNetDisk.clear();return;}
+    var interval = Math.max(Math.floor(netData.length/14),0)||0;
+    chartNetDisk.setOption({
+      tooltip: Object.assign({trigger:'axis'},getTooltip()),
+      legend:{bottom:0,textStyle:{color:'#94A3B8',fontSize:11},data:['网络速率 (MB/s)','磁盘延迟 (ms)']},
+      grid:{left:'3%',right:'4%',top:12,bottom:32,containLabel:true},
+      xAxis:{type:'category',boundaryGap:false,data:netData.map(function(d){return d[0];}),
+        axisLine:{lineStyle:{color:'#1E293B'}},axisTick:{show:false},
+        axisLabel:{color:'#64748B',fontSize:9,fontFamily:'JetBrains Mono,monospace',interval:interval,rotate:30},
+        splitLine:{show:false}},
+      yAxis:[
+        {type:'value',name:'MB/s',nameTextStyle:{color:'#64748B',fontSize:10},
+          axisLabel:{color:'#64748B',fontSize:10},
+          splitLine:{lineStyle:{color:'rgba(30,41,59,0.4)',type:'dashed'}}},
+        {type:'value',name:'延迟 ms',nameTextStyle:{color:'#64748B',fontSize:10},
+          axisLabel:{color:'#64748B',fontSize:10,formatter:'{value} ms'},splitLine:{show:false}}
+      ],
+      series:[
+        {name:'网络速率 (MB/s)',type:'bar',data:netData.map(function(d){return d[1];}),
+          itemStyle:{color:new echarts.graphic.LinearGradient(0,0,0,1,[
+            {offset:0,color:'rgba(99,102,241,0.8)'},{offset:1,color:'rgba(99,102,241,0.2)'}]),borderRadius:[3,3,0,0]},
+          barWidth:'60%'},
+        {name:'磁盘延迟 (ms)',type:'line',yAxisIndex:1,data:diskData.map(function(d){return d[1];}),
+          smooth:true,symbol:'none',lineStyle:{color:'#F59E0B',width:2},itemStyle:{color:'#F59E0B'}}
+      ]
+    },true);
+  }
+
+  function refreshDonutChart() {
+    if(!chartsReady||!currentData) return;
+    var td = currentData.tagDistribution || [];
+    var colors = ['#10B981','#6366F1','#F59E0B','#EF4444','#06B6D4','#8B5CF6','#EC4899','#14B8A6','#F97316','#3B82F6','#A855F7'];
+    chartDonut.setOption({
+      tooltip: Object.assign({trigger:'item',formatter:function(p){return p.name+'<br/>上报次数: <b>'+p.value+'</b> ('+p.percent+'%)';}},getTooltip()),
+      legend:{bottom:0,textStyle:{color:'#64748B',fontSize:9},itemWidth:8,itemHeight:8,type:'scroll'},
+      series:[{type:'pie',radius:['55%','78%'],center:['50%','48%'],avoidLabelOverlap:false,
+        itemStyle:{borderRadius:4,borderColor:'#0D111A',borderWidth:2},label:{show:false},
+        emphasis:{label:{show:true,fontSize:14,fontWeight:'bold',color:'#E2E8F0'},scaleSize:8},
+        data:td.map(function(d,i){return{name:d.label||d.tag,value:d.count,itemStyle:{color:colors[i%colors.length]}};})
+      }]
+    },true);
+  }
+
+  function refreshAllCharts() {
+    if(!chartsReady||!currentData) return;
+    try{refreshCpuMemChart();}catch(e){console.error('CPU/Mem:',e);}
+    try{refreshNetDiskChart();}catch(e){console.error('Net/Disk:',e);}
+    try{refreshDonutChart();}catch(e){console.error('Donut:',e);}
+  }
+
+  function updateKPIs(kpi) {
+    document.getElementById('kpi-clusters').textContent = kpi.totalHosts;
+    document.getElementById('kpi-active').textContent = kpi.activeHosts+'/'+kpi.totalHosts;
+    document.getElementById('kpi-cpu').textContent = kpi.avgCpuLoad.toFixed(1)+'%';
+    var gb = kpi.totalNetThroughput/1024;
+    document.getElementById('kpi-net').textContent = gb>=1?gb.toFixed(2)+' TB':(gb*1024).toFixed(0)+' GB';
+    document.getElementById('kpi-alerts').textContent = kpi.unackedAlerts;
+  }
+
+  function buildHostGrid(hosts, criticalHost, warningHosts) {
+    var grid = document.getElementById('host-grid');
+    grid.innerHTML = '';
+    hosts.forEach(function(h){
+      var status = (h.hostid===criticalHost)?'critical':(warningHosts.indexOf(h.hostid)!==-1)?'warning':'healthy';
+      var sc = status==='critical'?'status-critical breathe-red':status==='warning'?'status-warning breathe-amber':'status-healthy breathe-green';
+      var num = h.hostid.replace('host','');
+      var sq = document.createElement('div');
+      sq.className = 'host-square '+sc;
+      sq.textContent = num;
+      sq.title = h.hostid+' - '+(status==='critical'?'故障':status==='warning'?'警告':'健康')+' | '+(h.hostname||'')+' | 磁盘:'+(h.max_disk_util?h.max_disk_util.toFixed(1)+'%':'N/A');
+      sq.dataset.host = h.hostid;
+      sq.addEventListener('click',function(){onHostClick(h.hostid);});
+      grid.appendChild(sq);
+    });
+  }
+
+  function onHostClick(hostid) {
+    selectedHost = (selectedHost===hostid)?null:hostid;
+    var squares = document.querySelectorAll('.host-square');
+    for(var i=0;i<squares.length;i++){
+      squares[i].classList.remove('active');
+      if(squares[i].dataset.host===selectedHost) squares[i].classList.add('active');
+    }
+    document.getElementById('selected-host-label').textContent = selectedHost||'全部主机';
+    fetchData(selectedHost, function(err){
+      if(err){console.error('Fetch error:',err);return;}
+      updateKPIs(currentData.kpi);
+      refreshAllCharts();
+      updateAlertScroll();
+    });
+  }
+
+  function getSevColor(s){return s==='critical'?'#EF4444':s==='warning'?'#F59E0B':'#6366F1';}
+  function getSevLabel(s){return s==='critical'?'危险':s==='warning'?'警告':'信息';}
+
+  function updateAlertScroll() {
+    var container = document.getElementById('alert-inner');
+    if(!container||!currentData) return;
+    var alerts = currentData.alerts || [];
+    if(alerts.length===0){
+      container.innerHTML = '<div style="color:#64748B;font-size:12px;text-align:center;padding:16px">当前无活跃告警</div>';
+      container.style.animation = 'none';
+      return;
+    }
+    var duration = Math.max(20, alerts.length*0.8);
+    var html = '';
+    for(var dup=0;dup<2;dup++){
+      for(var i=0;i<alerts.length;i++){
+        var a=alerts[i];
+        var sc=getSevColor(a.severity);
+        var sl=getSevLabel(a.severity);
+        var unit=(a.tag==='cpu_percent'||a.tag==='disk_util_percent')?'%':'';
+        html += '<div class="alert-item" style="display:flex;align-items:flex-start;gap:6px;font-size:12px;padding:4px 6px;border-radius:4px;transition:background 0.2s">'+
+          '<span class="status-dot" style="margin-top:4px;background:'+sc+';box-shadow:0 0 4px '+sc+'"></span>'+
+          '<div style="flex:1;min-width:0">'+
+            '<span style="color:#64748B;font-size:10px;font-family:JetBrains Mono,monospace">'+a.time+'</span> '+
+            '<span style="color:'+sc+';font-weight:500">['+sl+']</span> '+
+            '<span style="color:#E2E8F0">'+a.host+'</span> '+
+            '<span style="color:#94A3B8">'+a.tagLabel+' max_value 达到 </span>'+
+            '<span style="color:'+sc+';font-weight:600">'+a.value.toFixed(2)+unit+'</span>'+
+          '</div></div>';
+      }
+    }
+    container.innerHTML = html;
+    container.style.animation = 'scroll-up '+duration+'s linear infinite';
+  }
+
+  function init() {
+    initCharts();
+    fetchData(null, function(err){
+      if(err){
+        console.error('Initial fetch failed:', err);
+        document.querySelectorAll('.loading-indicator').forEach(function(el){
+          el.innerHTML = '<span style="color:#EF4444;font-size:14px;text-align:center">无法连接后端 API<br><small>请确认 app.py 已启动 (python app.py)</small></span>';
+        });
+        return;
+      }
+      updateKPIs(currentData.kpi);
+      buildHostGrid(currentData.hosts, currentData.criticalHost, currentData.warningHosts);
+      refreshAllCharts();
+      updateAlertScroll();
+      console.log('%cTSARPULSE %cNOC Monitor %cReady','color:#10B981;font-size:16px;font-weight:bold;','color:#E2E8F0;font-size:13px;','color:#94A3B8;');
+      console.log('  Hosts:',currentData.hosts.length,'| Critical:',currentData.criticalHost,'| Warnings:',currentData.warningHosts.join(', '),'| Alerts:',currentData.alerts.length);
+    });
+  }
+
+  var resizeTimer = null;
+  window.addEventListener('resize', function(){
+    if(resizeTimer) clearTimeout(resizeTimer);
+    resizeTimer = setTimeout(function(){
+      if(chartCpuMem){try{chartCpuMem.resize();}catch(e){}}
+      if(chartNetDisk){try{chartNetDisk.resize();}catch(e){}}
+      if(chartDonut){try{chartDonut.resize();}catch(e){}}
+    },150);
+  });
+
+  document.addEventListener('keydown', function(e){
+    if(e.key==='Escape'&&selectedHost) onHostClick(selectedHost);
+  });
+
+  init();
+})();
+</script>
+
+</body>
+</html>
